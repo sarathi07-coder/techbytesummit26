@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ReagentWatch AI</string>
+    <string name="title_activity_main">ReagentWatch AI</string>
+    <string name="package_name">gov.tn.reagentwatch</string>
+    <string name="custom_url_scheme">gov.tn.reagentwatch</string>
+</resources>

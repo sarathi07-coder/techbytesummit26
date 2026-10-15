@@ -8,3 +8,6 @@ build/
 .DS_Store
 test.css
 *.traineddata
+android/app/build/
+android/.gradle/
+android/build/
