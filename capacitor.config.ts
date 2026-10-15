@@ -7,7 +7,7 @@ const config: CapacitorConfig = {
   server: {
     androidScheme: 'https',
     cleartext: true,
-    url: 'http://10.10.45.28:3000'
+    url: 'https://09b8b02620a93d.lhr.life'
   },
   android: {
     allowMixedContent: true
