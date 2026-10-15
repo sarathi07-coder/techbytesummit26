@@ -48,7 +48,8 @@ import {
   Clock,
   PauseCircle,
   FileText,
-  Building2
+  Building2,
+  UserPlus
 } from 'lucide-react';
 import Link from 'next/link';
 import { ChemicalBottle, AlertNotification, School, SystemEvaluationMetrics } from '@/types/chemical';
@@ -65,6 +66,14 @@ import {
   saveAlert, 
   logDegradationEvent 
 } from '@/lib/supabase';
+import { 
+  getGovernanceTickets, 
+  submitTeacherIncident, 
+  approveByPrincipal, 
+  rejectByPrincipal, 
+  dispatchByDeo, 
+  GovernanceTicket 
+} from '@/lib/governance-flow';
 import dynamic from 'next/dynamic';
 
 const QrCameraScanner = dynamic(() => import('@/components/QrCameraScanner'), { ssr: false });
@@ -84,9 +93,10 @@ const DistrictGisMap = dynamic(() => import('@/components/DistrictGisMap'), { ss
 const AuthModal = dynamic(() => import('@/components/AuthModal'), { ssr: false });
 const SchoolDetailsModal = dynamic(() => import('@/components/SchoolDetailsModal'), { ssr: false });
 const InstitutionalLoginGateway = dynamic(() => import('@/components/InstitutionalLoginGateway'), { ssr: false });
+const TeacherProvisioningModal = dynamic(() => import('@/components/TeacherProvisioningModal').then(m => m.TeacherProvisioningModal), { ssr: false });
 
 export default function ReagentWatchDashboard() {
-  const { currentUser, isAuthenticated, loginAsRole, logout, can } = useAuth();
+  const { currentUser, isAuthenticated, logout, can, registeredTeachers } = useAuth();
   const [activeTab, setActiveTab] = useState<'teacher' | 'incompat' | 'principal_hitl' | 'district' | 'eval' | 'exchange'>('teacher');
   const [selectedSchool, setSelectedSchool] = useState<School>(SEED_SCHOOLS[0]);
   const [isOnline, setIsOnline] = useState<boolean>(true);
@@ -95,6 +105,11 @@ export default function ReagentWatchDashboard() {
   const [bottles, setBottles] = useState<ChemicalBottle[]>(SEED_DEMO_BOTTLES);
   const [alerts, setAlerts] = useState<AlertNotification[]>(SEED_ALERTS);
   const [selectedBottle, setSelectedBottle] = useState<ChemicalBottle | null>(SEED_DEMO_BOTTLES[0]);
+  
+  // Continuous Governance Workflow State (Teacher -> Principal -> DEO)
+  const [governanceTickets, setGovernanceTickets] = useState<GovernanceTicket[]>([]);
+  const [isTeacherProvModalOpen, setIsTeacherProvModalOpen] = useState(false);
+  const [principalNotesInput, setPrincipalNotesInput] = useState<{ [ticketId: string]: string }>({});
   
   // Principal HITL Queue State
   const [hitlQueue, setHitlQueue] = useState([
@@ -173,6 +188,14 @@ export default function ReagentWatchDashboard() {
         setAlerts(loadedAlerts);
       }
     });
+
+    // Initialize and sync continuous governance workflow
+    setGovernanceTickets(getGovernanceTickets());
+    const handleSync = () => {
+      setGovernanceTickets(getGovernanceTickets());
+    };
+    window.addEventListener('governance_tickets_updated', handleSync);
+    return () => window.removeEventListener('governance_tickets_updated', handleSync);
   }, []);
 
   // Live PubChem NIH Data State
@@ -487,41 +510,12 @@ export default function ReagentWatchDashboard() {
               </div>
             </div>
 
-            {/* Quick 1-Click Role Switcher for Hackathon Judges & Evaluators */}
-            <div className="hidden sm:flex rounded-lg border border-slate-800 bg-slate-900/80 p-0.5 text-xs">
-              <button
-                onClick={() => loginAsRole('teacher')}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
-                  currentUser.role === 'teacher' 
-                    ? 'bg-emerald-500 text-slate-950 shadow-sm' 
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Switch to Teacher (R. Selvakumar, Govt HSS Pollachi)"
-              >
-                Teacher
-              </button>
-              <button
-                onClick={() => loginAsRole('principal')}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
-                  currentUser.role === 'principal' 
-                    ? 'bg-purple-500 text-white shadow-sm' 
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Switch to Principal (Dr. K. Meenakshi, Madukkarai CHS)"
-              >
-                Principal
-              </button>
-              <button
-                onClick={() => loginAsRole('district_officer')}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
-                  currentUser.role === 'district_officer' 
-                    ? 'bg-blue-500 text-white shadow-sm' 
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="Switch to District Officer (Er. S. Murugesan, DEO)"
-              >
-                DEO
-              </button>
+            {/* Authenticated Role Badge (Easy bypass buttons removed for strict governance) */}
+            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-300">
+              <span className={`w-2 h-2 rounded-full ${
+                currentUser.role === 'principal' ? 'bg-purple-400' : currentUser.role === 'district_officer' ? 'bg-blue-400' : 'bg-cyan-400'
+              } animate-pulse`} />
+              <span>Session: <strong className="text-white uppercase font-bold">{currentUser.role.replace(/_/g, ' ')}</strong></span>
             </div>
 
             {/* Log Out Button */}
@@ -554,15 +548,6 @@ export default function ReagentWatchDashboard() {
               <span>+ Register Campus</span>
             </Link>
 
-            {/* Sign In / Sign Up Modal Trigger */}
-            <button
-              onClick={() => setIsAuthModalOpen(true)}
-              className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer"
-              title="Open Login / Sign Up / Role Delegation Dialog"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">Delegation</span>
-            </button>
 
             {/* AI SDS Copilot Button */}
             <button
@@ -784,7 +769,7 @@ export default function ReagentWatchDashboard() {
               </div>
             </div>
 
-            {/* Quick Switch Buttons for Evaluators */}
+            {/* Verified Session Info */}
             <div className="flex items-center gap-2 self-start md:self-center">
               <span className="text-[11px] text-slate-400 font-mono hidden sm:inline">Active Role:</span>
               <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border uppercase font-mono ${
@@ -798,8 +783,8 @@ export default function ReagentWatchDashboard() {
               </span>
               <button
                 onClick={logout}
-                className="text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition flex items-center gap-1 cursor-pointer ml-1"
-                title="Log out and return to Home Page Login Gateway"
+                className="text-xs px-2.5 py-1 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 font-semibold transition flex items-center gap-1 cursor-pointer ml-1"
+                title="Log out and switch account via Institutional Login Gateway"
               >
                 <LogOut className="w-3 h-3 text-rose-400" />
                 <span>Log Out</span>
@@ -812,13 +797,12 @@ export default function ReagentWatchDashboard() {
             {/* Step 1: Teacher */}
             <div
               onClick={() => {
-                if (currentUser.role !== 'teacher') loginAsRole('teacher');
-                setActiveTab('teacher');
+                if (currentUser.role === 'teacher') setActiveTab('teacher');
               }}
-              className={`p-3.5 rounded-xl border transition-all cursor-pointer relative ${
+              className={`p-3.5 rounded-xl border transition-all relative ${
                 currentUser.role === 'teacher'
-                  ? 'bg-gradient-to-b from-cyan-950/60 to-slate-900 border-cyan-500 ring-2 ring-cyan-500/30 shadow-lg shadow-cyan-500/10'
-                  : 'bg-slate-900/40 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/70 opacity-75'
+                  ? 'bg-gradient-to-b from-cyan-950/60 to-slate-900 border-cyan-500 ring-2 ring-cyan-500/30 shadow-lg shadow-cyan-500/10 cursor-pointer'
+                  : 'bg-slate-900/40 border-slate-800/80 opacity-75'
               }`}
             >
               <div className="flex items-center justify-between mb-2">
@@ -830,17 +814,17 @@ export default function ReagentWatchDashboard() {
                   </span>
                   <span className="text-xs font-bold text-white">Science Teacher</span>
                 </div>
-                {currentUser.role === 'teacher' && (
-                  <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
-                    Active View
-                  </span>
-                )}
+                <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                  currentUser.role === 'teacher' ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'
+                }`}>
+                  {governanceTickets.filter(t => t.schoolId === selectedSchool.id).length} Escalated
+                </span>
               </div>
               <p className="text-[11px] text-slate-300">
                 <b>Classroom Custodian:</b> Reagent Shelf, Onboard with CAS Checksum, 2D Cabinet Incompatibility.
               </p>
               <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-                <span className="text-cyan-400 font-mono">Pollachi West Lab</span>
+                <span className="text-cyan-400 font-mono">Stage 1: Classroom</span>
                 <span className="text-slate-400 font-medium">Detects & Escalates ➔</span>
               </div>
             </div>
@@ -848,13 +832,12 @@ export default function ReagentWatchDashboard() {
             {/* Step 2: Headmaster */}
             <div
               onClick={() => {
-                if (currentUser.role !== 'principal') loginAsRole('principal');
-                setActiveTab('principal_hitl');
+                if (currentUser.role === 'principal') setActiveTab('principal_hitl');
               }}
-              className={`p-3.5 rounded-xl border transition-all cursor-pointer relative ${
+              className={`p-3.5 rounded-xl border transition-all relative ${
                 currentUser.role === 'principal'
-                  ? 'bg-gradient-to-b from-purple-950/60 to-slate-900 border-purple-500 ring-2 ring-purple-500/30 shadow-lg shadow-purple-500/10'
-                  : 'bg-slate-900/40 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/70 opacity-75'
+                  ? 'bg-gradient-to-b from-purple-950/60 to-slate-900 border-purple-500 ring-2 ring-purple-500/30 shadow-lg shadow-purple-500/10 cursor-pointer'
+                  : 'bg-slate-900/40 border-slate-800/80 opacity-75'
               }`}
             >
               <div className="flex items-center justify-between mb-2">
@@ -866,17 +849,19 @@ export default function ReagentWatchDashboard() {
                   </span>
                   <span className="text-xs font-bold text-white">Headmaster / Principal</span>
                 </div>
-                {currentUser.role === 'principal' && (
-                  <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40">
-                    Active View
-                  </span>
-                )}
+                <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                  governanceTickets.filter(t => t.principalStatus === 'pending').length > 0
+                    ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 animate-pulse'
+                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                }`}>
+                  {governanceTickets.filter(t => t.principalStatus === 'pending').length} Awaiting Dual-Key
+                </span>
               </div>
               <p className="text-[11px] text-slate-300">
-                <b>Dual-Key Authority:</b> LangGraph HITL Queue Sign-off, Campus Evacuation Siren, 2D Compliance Audit.
+                <b>Dual-Key Authority:</b> LangGraph HITL Queue Sign-off, Campus Evacuation Siren, Faculty Management.
               </p>
               <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-                <span className="text-purple-400 font-mono">HITL Gatekeeper</span>
+                <span className="text-purple-400 font-mono">Stage 2: Institutional</span>
                 <span className="text-slate-400 font-medium">Authorizes Hazmat ➔</span>
               </div>
             </div>
@@ -884,13 +869,12 @@ export default function ReagentWatchDashboard() {
             {/* Step 3: DEO */}
             <div
               onClick={() => {
-                if (currentUser.role !== 'district_officer') loginAsRole('district_officer');
-                setActiveTab('district');
+                if (currentUser.role === 'district_officer') setActiveTab('district');
               }}
-              className={`p-3.5 rounded-xl border transition-all cursor-pointer relative ${
+              className={`p-3.5 rounded-xl border transition-all relative ${
                 currentUser.role === 'district_officer'
-                  ? 'bg-gradient-to-b from-emerald-950/60 to-slate-900 border-emerald-500 ring-2 ring-emerald-500/30 shadow-lg shadow-emerald-500/10'
-                  : 'bg-slate-900/40 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/70 opacity-75'
+                  ? 'bg-gradient-to-b from-emerald-950/60 to-slate-900 border-emerald-500 ring-2 ring-emerald-500/30 shadow-lg shadow-emerald-500/10 cursor-pointer'
+                  : 'bg-slate-900/40 border-slate-800/80 opacity-75'
               }`}
             >
               <div className="flex items-center justify-between mb-2">
@@ -902,17 +886,19 @@ export default function ReagentWatchDashboard() {
                   </span>
                   <span className="text-xs font-bold text-white">District Officer (DEO)</span>
                 </div>
-                {currentUser.role === 'district_officer' && (
-                  <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                    Active View
-                  </span>
-                )}
+                <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                  governanceTickets.filter(t => t.principalStatus === 'approved').length > 0
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                }`}>
+                  {governanceTickets.filter(t => t.principalStatus === 'approved').length} Fleet Ready
+                </span>
               </div>
               <p className="text-[11px] text-slate-300">
                 <b>District Commander:</b> 100.2 km Hazmat Fleet Route Sweep, Scientific Evaluation Benchmarks, Chemical Exchange.
               </p>
               <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-                <span className="text-emerald-400 font-mono">100.2 km Route</span>
+                <span className="text-emerald-400 font-mono">Stage 3: District</span>
                 <span className="text-slate-400 font-medium">Safe Retrieval ✓</span>
               </div>
             </div>
@@ -936,20 +922,19 @@ export default function ReagentWatchDashboard() {
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
               <button
                 onClick={() => {
-                  loginAsRole('principal');
-                  setTeacherEscalationNotice(null);
-                  setIsHitlModalOpen(true);
+                  logout();
                 }}
                 className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                title="Log out and sign in as Headmaster to approve"
               >
-                <span>Switch to Principal & Sign Off</span>
+                <span>Log Out to Principal Login</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => setTeacherEscalationNotice(null)}
                 className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs border border-slate-700 cursor-pointer"
               >
-                Dismiss
+                Acknowledge & Stay in Lab
               </button>
             </div>
           </div>
@@ -1396,8 +1381,30 @@ export default function ReagentWatchDashboard() {
                       <button
                         onClick={() => {
                           if (currentUser.role === 'teacher') {
+                            if (!selectedBottle) return;
+                            const createdTicket = submitTeacherIncident({
+                              bottleId: selectedBottle.id,
+                              chemicalName: selectedBottle.chemical.canonicalName,
+                              chemicalFormula: selectedBottle.chemical.chemicalFormula,
+                              casNumber: selectedBottle.chemical.casNumber,
+                              schoolId: selectedSchool.id,
+                              schoolName: selectedSchool.name,
+                              roomName: 'Senior Chemistry Lab 102',
+                              cabinetName: 'Cabinet B (Flammables / Organics)',
+                              shelfNumber: 'Shelf 2 (Middle Shelf)',
+                              volumeMl: selectedBottle.currentVolumeMl,
+                              unit: selectedBottle.unit,
+                              riskScore: selectedBottle.currentRiskScore || 98,
+                              anomalyType: 'Visual Peroxide Crystal Precipitation',
+                              teacherObservation: `Visual degradation anomaly detected by ${currentUser.name}. In-situ peroxide crystals observed on neck threading. Quarantined in secondary container. Forwarded to Headmaster for dual-key disposal approval.`,
+                              teacherId: currentUser.id,
+                              teacherName: currentUser.name,
+                              teacherDesignation: currentUser.designation || 'Science Teacher / Lab Custodian',
+                              urgency: (selectedBottle.currentRiskScore || 98) >= 80 ? 'critical' : 'high',
+                            });
+                            setGovernanceTickets(getGovernanceTickets());
                             setTeacherEscalationNotice(
-                              `Disposal request for ${selectedBottle?.chemical.canonicalName || 'Reagent'} (CAS: ${selectedBottle?.chemical.casNumber || '60-29-7'}) has been logged and forwarded to Principal Dr. K. Meenakshi. Under Institutional Safety Protocol, Chemistry Teachers can report hazards, but hazardous destruction manifests must be signed off by the Principal.`
+                              `✅ Ticket #${createdTicket.id} Transmitted to Headmaster: Hazard escalation for ${selectedBottle?.chemical.canonicalName || 'Reagent'} (CAS: ${selectedBottle?.chemical.casNumber || '60-29-7'}) has been officially queued for Principal Dr. K. Meenakshi, Ph.D. Under institutional governance rules, only the Headmaster possesses dual-key sign-off authority to release this bottle to the DEO Hazmat Fleet.`
                             );
                           } else {
                             setIsHitlModalOpen(true);
@@ -1406,7 +1413,7 @@ export default function ReagentWatchDashboard() {
                         className="py-2.5 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-2 transition-colors shadow-lg shadow-purple-600/30 cursor-pointer"
                       >
                         <GitBranch className="w-4 h-4" />
-                        <span>Authorize via LangGraph HITL</span>
+                        <span>{currentUser.role === 'teacher' ? 'Escalate to Headmaster HITL' : 'Authorize via LangGraph HITL'}</span>
                       </button>
 
                       <button
@@ -1421,6 +1428,97 @@ export default function ReagentWatchDashboard() {
 
                   {/* 3D WebGL Chemical Bottle Representation */}
                   <ThreeBottleViewer bottle={selectedBottle} />
+
+                  {/* Step 1 Institutional Chain: Teacher's Active Escalations to Principal */}
+                  <div className="glass-panel p-5 rounded-2xl border border-cyan-500/30 bg-gradient-to-br from-cyan-950/20 via-slate-900 to-slate-950">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+                          <GitBranch className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                            My Campus Escalations to Principal & DEO ({governanceTickets.filter(t => t.schoolId === selectedSchool.id).length})
+                          </h3>
+                          <p className="text-[11px] text-slate-400">
+                            Strict 3-Tier Reagent Lifecycle: Teacher detects ➔ Headmaster signs off ➔ DEO dispatches Hazmat.
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 border border-cyan-500/30 text-cyan-300">
+                        Classroom Custodian
+                      </span>
+                    </div>
+
+                    <div className="mt-3 space-y-2.5">
+                      {governanceTickets.filter(t => t.schoolId === selectedSchool.id).length === 0 ? (
+                        <p className="text-xs text-slate-400 py-3 text-center">
+                          No active chemical anomalies escalated to the Headmaster yet. Use &quot;Escalate to Headmaster HITL&quot; above to submit hazard tickets.
+                        </p>
+                      ) : (
+                        governanceTickets.filter(t => t.schoolId === selectedSchool.id).map(ticket => (
+                          <div key={ticket.id} className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-cyan-400">{ticket.id}</span>
+                                <span className="font-bold text-white">{ticket.chemicalName}</span>
+                                <span className="text-[10px] font-mono text-slate-400">CAS: {ticket.casNumber}</span>
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+                                  ticket.urgency === 'critical' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'
+                                }`}>
+                                  Risk: {ticket.riskScore}/100
+                                </span>
+                              </div>
+                              <p className="text-slate-300 text-[11px]">
+                                <b>Teacher Note:</b> {ticket.teacherObservation}
+                              </p>
+                              <div className="text-[10px] text-slate-400 flex flex-wrap gap-2 pt-0.5">
+                                <span>Reported: {new Date(ticket.submittedAt).toLocaleString()}</span>
+                                <span>•</span>
+                                <span>Location: {ticket.roomName} / {ticket.cabinetName} / {ticket.shelfNumber}</span>
+                              </div>
+                            </div>
+
+                            {/* Status indicator across the 3 tiers */}
+                            <div className="shrink-0 flex flex-col items-start md:items-end gap-1.5">
+                              {ticket.principalStatus === 'pending' && (
+                                <span className="px-2.5 py-1 rounded-lg bg-purple-500/10 text-purple-300 border border-purple-500/30 text-[11px] font-bold flex items-center gap-1.5 animate-pulse">
+                                  <Clock className="w-3.5 h-3.5" />
+                                  <span>Step 2: Pending Headmaster Dual-Key</span>
+                                </span>
+                              )}
+
+                              {ticket.principalStatus === 'approved' && ticket.deoStatus === 'pending_dispatch' && (
+                                <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center gap-1.5">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                  <span>Step 2 Approved! Forwarded to DEO Fleet</span>
+                                </span>
+                              )}
+
+                              {ticket.deoStatus === 'dispatched' && (
+                                <div className="text-right">
+                                  <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1.5">
+                                    <Truck className="w-3.5 h-3.5" />
+                                    <span>Step 3: Hazmat Fleet Dispatched</span>
+                                  </span>
+                                  <span className="text-[10px] font-mono text-emerald-400 block mt-0.5">
+                                    {ticket.fleetVehicleId} • Manifest #{ticket.manifestId}
+                                  </span>
+                                </div>
+                              )}
+
+                              {ticket.principalStatus === 'rejected' && (
+                                <span className="px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-300 border border-rose-500/30 text-[11px] font-bold flex items-center gap-1.5">
+                                  <AlertTriangle className="w-3.5 h-3.5" />
+                                  <span>Returned by Principal: {ticket.principalNotes}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
 
                   {/* Active Alerts for this school */}
                   <div className="glass-panel p-4 rounded-xl border border-slate-800">
@@ -1761,7 +1859,7 @@ export default function ReagentWatchDashboard() {
                   <span className="text-[10px] uppercase font-mono text-slate-400">HITL State Machine</span>
                   <div className="flex items-center gap-1.5 mt-1 text-xs font-bold text-amber-400">
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                    <span>Interrupt Gate Active</span>
+                    <span>Dual-Key Gate Active</span>
                   </div>
                 </div>
 
@@ -1783,7 +1881,7 @@ export default function ReagentWatchDashboard() {
                 <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
                   <span className="text-[10px] uppercase font-mono text-slate-400">Pending Actions</span>
                   <div className="text-xs font-bold text-cyan-400 mt-1">
-                    {hitlQueue.filter(q => q.status === 'pending').length} Actions Required
+                    {governanceTickets.filter(t => t.principalStatus === 'pending').length} Actions Required
                   </div>
                 </div>
               </div>
@@ -1841,115 +1939,232 @@ export default function ReagentWatchDashboard() {
               </div>
             </div>
 
-            {/* Pending LangGraph HITL Authorizations List */}
+            {/* Continuous Governance Trail: Dual-Key Sign-Off Queue */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
                   <Clock className="w-4 h-4 text-indigo-400" />
-                  Active Dual-Key Authorization Queue ({hitlQueue.length})
+                  <span>Teacher Hazard Escalation Queue ({governanceTickets.filter(t => t.schoolId === selectedSchool.id || currentUser.schoolId === 'all').length})</span>
                 </h3>
                 <span className="text-xs text-slate-400 font-mono">
-                  State: Interrupted at Human Checkpoint
+                  Continuous Flow: Science Teacher ➔ Headmaster Sign-Off ➔ DEO Hazmat Fleet
                 </span>
               </div>
 
-              {(hitlQueue || []).map((item) => (
-                <div 
-                  key={item.id}
-                  className="glass-panel p-6 rounded-2xl border border-slate-800 hover:border-slate-700 transition space-y-4"
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-base font-bold text-white">{item.chemicalName}</span>
-                        <span className="text-xs font-mono text-cyan-400">CAS: {item.casNumber}</span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 uppercase">
-                          Score: {item.riskScore}/100 Critical
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-1">
-                        Campus: <b className="text-slate-200">{item.schoolName}</b> • Detected Anomaly: <b className="text-amber-400">{item.anomalyType}</b>
-                      </p>
-                    </div>
-
-                    <div>
-                      {item.status === 'approved' ? (
-                        <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
-                          <CheckCircle2 className="w-4 h-4" />
-                          Authorized by Principal
-                        </span>
-                      ) : (
-                        <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center gap-1.5 animate-pulse">
-                          <PauseCircle className="w-4 h-4" />
-                          Pending Human Sign-Off
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Reasoning Chain Trace */}
-                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                    <span className="text-[10px] font-bold uppercase font-mono tracking-wider text-slate-400 block">
-                      LangGraph Autonomous Decision Trace:
-                    </span>
-                    <div className="space-y-1.5">
-                      {((item && item.reasoning) || []).map((step, idx) => (
-                        <div key={idx} className="flex items-start gap-2 text-xs text-slate-300 font-mono">
-                          <span className="text-indigo-400 font-bold shrink-0">{idx + 1}.</span>
-                          <span>{step}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Principal Sign-Off Actions */}
-                  {item.status === 'pending' ? (
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
-                      <div className="text-xs text-slate-400">
-                        Signatory: <b className="text-slate-200">{currentUser.name}</b> ({currentUser.designation})
-                      </div>
-
-                      <div className="flex items-center gap-2.5">
-                        <button
-                          onClick={() => {
-                            setHitlQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'approved' } : q));
-                            setIsHazmatDispatched(true);
-                            alert('Dual-Key Authorization Completed: Immediate mineral oil in-situ wetting and Class-1 Hazmat transfer dispatched to Coimbatore DEO fleet.');
-                          }}
-                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition cursor-pointer flex items-center gap-1.5"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Approve Quarantine & Hazmat Transfer</span>
-                        </button>
-
-                        <button
-                          onClick={() => setIsHitlModalOpen(true)}
-                          className="px-3.5 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
-                        >
-                          <FileText className="w-4 h-4" />
-                          <span>Detailed State Machine Dossier</span>
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                      <div>
-                        <span className="font-bold block">Dual-Key signature recorded in digital audit log. Reed-Solomon quarantine tag applied.</span>
-                        <span className="text-[11px] text-slate-300">Hazardous transfer directive transmitted to Coimbatore District DEO Fleet.</span>
-                      </div>
-                      <button
-                        onClick={() => {
-                          loginAsRole('district_officer');
-                          setActiveTab('district');
-                        }}
-                        className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-                      >
-                        <span>Proceed to Step 3: DEO Hazmat Fleet ➔</span>
-                      </button>
-                    </div>
-                  )}
+              {governanceTickets.filter(t => t.schoolId === selectedSchool.id || currentUser.schoolId === 'all').length === 0 ? (
+                <div className="glass-panel p-8 rounded-2xl border border-slate-800 text-center space-y-2">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
+                  <h4 className="text-sm font-bold text-white">All Teacher Escalations Resolved</h4>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto">
+                    No pending chemical degradation anomalies reported by Science Teachers for this campus.
+                  </p>
                 </div>
-              ))}
+              ) : (
+                governanceTickets.filter(t => t.schoolId === selectedSchool.id || currentUser.schoolId === 'all').map((ticket) => (
+                  <div 
+                    key={ticket.id}
+                    className="glass-panel p-6 rounded-2xl border border-slate-800 hover:border-slate-700 transition space-y-4"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-purple-400">{ticket.id}</span>
+                          <span className="text-base font-bold text-white">{ticket.chemicalName}</span>
+                          <span className="text-xs font-mono text-cyan-400">CAS: {ticket.casNumber}</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase ${
+                            ticket.urgency === 'critical' ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          }`}>
+                            Score: {ticket.riskScore}/100 {ticket.urgency}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1">
+                          Campus: <b className="text-slate-200">{ticket.schoolName}</b> • Detected Anomaly: <b className="text-amber-400">{ticket.anomalyType}</b>
+                        </p>
+                      </div>
+
+                      <div>
+                        {ticket.principalStatus === 'approved' ? (
+                          <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                            Authorized by Headmaster
+                          </span>
+                        ) : ticket.principalStatus === 'rejected' ? (
+                          <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1.5">
+                            <AlertTriangle className="w-4 h-4 text-rose-400" />
+                            Returned to Teacher
+                          </span>
+                        ) : (
+                          <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center gap-1.5 animate-pulse">
+                            <PauseCircle className="w-4 h-4 text-purple-400" />
+                            Pending Dual-Key Sign-Off
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Teacher Observation Dossier */}
+                    <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                        <span>Reported by: <strong className="text-white">{ticket.teacherName}</strong> ({ticket.teacherDesignation})</span>
+                        <span>Time: {new Date(ticket.submittedAt).toLocaleString()}</span>
+                      </div>
+                      <div className="p-2.5 rounded bg-slate-900/90 border border-slate-800 text-xs text-slate-200">
+                        <span className="text-amber-400 font-bold block mb-1">Teacher Laboratory Observation:</span>
+                        {ticket.teacherObservation}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono flex items-center gap-3 pt-1">
+                        <span>Room: <strong className="text-slate-300">{ticket.roomName}</strong></span>
+                        <span>•</span>
+                        <span>Cabinet: <strong className="text-slate-300">{ticket.cabinetName}</strong></span>
+                        <span>•</span>
+                        <span>Location: <strong className="text-slate-300">{ticket.shelfNumber}</strong></span>
+                      </div>
+                    </div>
+
+                    {/* Principal Sign-Off Actions */}
+                    {ticket.principalStatus === 'pending' ? (
+                      <div className="space-y-3 pt-2">
+                        <div>
+                          <label htmlFor={`principal-notes-${ticket.id}`} className="block text-xs font-semibold text-slate-300 mb-1">
+                            Headmaster Dual-Key Directive / Statutory Notes:
+                          </label>
+                          <input
+                            id={`principal-notes-${ticket.id}`}
+                            name={`principal_notes_${ticket.id}`}
+                            type="text"
+                            placeholder="e.g. Dual-Key Authorized. Physical quarantine confirmed. Approved for DEO Hazmat pickup."
+                            value={principalNotesInput[ticket.id] || ''}
+                            onChange={(e) => setPrincipalNotesInput(prev => ({ ...prev, [ticket.id]: e.target.value }))}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                          <div className="text-xs text-slate-400">
+                            Signatory: <b className="text-slate-200">{currentUser.name}</b> ({currentUser.designation})
+                          </div>
+
+                          <div className="flex items-center gap-2.5">
+                            <button
+                              onClick={() => {
+                                const notes = principalNotesInput[ticket.id] || `Dual-Key Authorized by Headmaster ${currentUser.name}. Mandatory lab quarantine sealed and chemical manifested for DEO pickup.`;
+                                approveByPrincipal(ticket.id, currentUser.id, currentUser.name, notes);
+                                setGovernanceTickets(getGovernanceTickets());
+                                setIsHazmatDispatched(true);
+                                alert(`✅ Dual-Key Authorization Completed: Ticket ${ticket.id} approved. Forwarded to Step 3: District Officer (DEO) Hazmat collection fleet.`);
+                              }}
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition cursor-pointer flex items-center gap-1.5"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>Approve Quarantine & Transmit to DEO</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                const notes = principalNotesInput[ticket.id] || `Returned to Science Teacher: Re-test with potassium iodide paper and inspect secondary containment tray.`;
+                                rejectByPrincipal(ticket.id, currentUser.id, currentUser.name, notes);
+                                setGovernanceTickets(getGovernanceTickets());
+                                alert(`Ticket ${ticket.id} returned to Science Teacher.`);
+                              }}
+                              className="px-3.5 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
+                            >
+                              <AlertTriangle className="w-4 h-4" />
+                              <span>Return to Teacher</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <span className="font-bold block">
+                            ✓ Dual-Key Authorized by {ticket.principalName} on {new Date(ticket.principalActionAt || '').toLocaleString()}
+                          </span>
+                          <span className="text-[11px] text-slate-300 block">
+                            Directive: &quot;{ticket.principalNotes}&quot;
+                          </span>
+                          <span className="text-[10px] font-mono text-cyan-300 block pt-0.5">
+                            Step 3 DEO Status: {ticket.deoStatus === 'dispatched' ? `🚚 Hazmat Fleet Dispatched (${ticket.fleetVehicleId})` : '⏳ Awaiting District Hazmat Officer Dispatch'}
+                          </span>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-emerald-950 border border-emerald-500/40 text-emerald-300">
+                            Transmitted to Step 3 (DEO)
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Campus Science Faculty Management & Credentials Authority */}
+            <div className="glass-panel p-6 rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/30 via-slate-900 to-slate-950 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+                    <GraduationCap className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">
+                      Campus Science Faculty Management & Lab Custodians
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Headmaster / Principal authority to provision new Science Teachers, assign laboratory custody, and issue institutional credentials.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsTeacherProvModalOpen(true)}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 flex items-center gap-2 cursor-pointer shrink-0"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>+ Provision New Science Teacher</span>
+                </button>
+              </div>
+
+              {/* Teachers Roster List */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {/* Pre-seeded primary teacher */}
+                <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white">R. Selvakumar, M.Sc.</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      Active Custodian
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Senior Chemistry Faculty & Lab Custodian
+                  </p>
+                  <div className="text-[10px] font-mono text-cyan-400 space-y-0.5 pt-1 border-t border-slate-800/80">
+                    <div>Username: <strong className="text-white">selvakumar_chem</strong></div>
+                    <div>Email: selvakumar.chem@tnschools.gov.in</div>
+                    <div>Assigned: Senior Chemistry Lab 102</div>
+                  </div>
+                </div>
+
+                {/* Dynamically provisioned teachers by Headmaster */}
+                {registeredTeachers.filter(t => t.schoolId === selectedSchool.id || currentUser.schoolId === 'all').map(tch => (
+                  <div key={tch.id} className="p-3.5 rounded-xl bg-slate-950/70 border border-indigo-500/30 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white">{tch.name}</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                        Provisioned
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      {tch.designation}
+                    </p>
+                    <div className="text-[10px] font-mono text-cyan-400 space-y-0.5 pt-1 border-t border-slate-800/80">
+                      <div>Username: <strong className="text-white">{tch.username}</strong></div>
+                      <div>Email: {tch.email}</div>
+                      <div>Assigned: {tch.labRoom}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -1984,29 +2199,139 @@ export default function ReagentWatchDashboard() {
                 </div>
               </div>
 
-              {/* Active Hazmat Sweep Status Banner */}
-              {(isHazmatDispatched || hitlQueue.some(q => q.status === 'approved')) && (
-                <div className="mt-4 p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/50 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
-                      <Truck className="w-5 h-5 animate-pulse" />
+              {/* Continuous Institutional Flow: DEO Hazmat Fleet Dispatch Queue */}
+              <div className="mt-4 p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+                      <Truck className="w-4 h-4" />
                     </div>
                     <div>
-                      <span className="font-bold text-xs text-emerald-300 uppercase tracking-wider font-mono block">
-                        Active Hazmat Sweep Order: GHSS Pollachi West Pick-up Authorized
-                      </span>
-                      <span className="text-xs text-slate-200">
-                        Class-B Diethyl Ether (CAS: 60-29-7) dual-key authorized by Principal Dr. K. Meenakshi. Fleet Stop #1 on 100.2 km multi-school route assigned.
-                      </span>
+                      <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                        District Hazardous Reagent Pickup Queue ({governanceTickets.length})
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        Rule: DEO Fleet accepts ONLY requests authorized by School Headmaster / Principal dual-key signature.
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-mono font-bold whitespace-nowrap">
-                      HAZMAT FLEET DISPATCHED
-                    </span>
-                  </div>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 border border-emerald-500/30 text-emerald-300">
+                    Step 3: District Hazmat Commander
+                  </span>
                 </div>
-              )}
+
+                <div className="space-y-3">
+                  {governanceTickets.length === 0 ? (
+                    <p className="text-xs text-slate-400 py-3 text-center">
+                      No hazardous waste collection tickets active across district schools.
+                    </p>
+                  ) : (
+                    governanceTickets.map(ticket => (
+                      <div 
+                        key={ticket.id}
+                        className={`p-4 rounded-xl border transition-all text-xs flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                          ticket.deoStatus === 'dispatched'
+                            ? 'bg-emerald-950/30 border-emerald-500/40'
+                            : ticket.principalStatus === 'approved'
+                            ? 'bg-gradient-to-r from-amber-950/30 via-slate-900 to-slate-950 border-amber-500/40'
+                            : 'bg-slate-950/60 border-slate-800/80 opacity-70'
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-emerald-400">{ticket.id}</span>
+                            <span className="font-bold text-white">{ticket.schoolName}</span>
+                            <span className="text-slate-400">•</span>
+                            <span className="text-slate-200">{ticket.chemicalName}</span>
+                            <span className="text-[10px] font-mono text-slate-400">CAS: {ticket.casNumber}</span>
+                          </div>
+
+                          <div className="text-[11px] text-slate-300 space-y-0.5">
+                            <div>
+                              <b className="text-cyan-400">Step 1 Teacher ({ticket.teacherName}):</b> {ticket.teacherObservation}
+                            </div>
+                            {ticket.principalStatus === 'approved' && (
+                              <div>
+                                <b className="text-purple-400">Step 2 Principal ({ticket.principalName}):</b> &quot;{ticket.principalNotes}&quot;
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="text-[10px] text-slate-400 font-mono flex flex-wrap gap-2 pt-0.5">
+                            <span>Anomaly: <strong className="text-amber-400">{ticket.anomalyType}</strong></span>
+                            <span>•</span>
+                            <span>Risk Score: <strong className="text-rose-400">{ticket.riskScore}/100</strong></span>
+                            <span>•</span>
+                            <span>Campus Location: {ticket.roomName}</span>
+                          </div>
+                        </div>
+
+                        {/* Status & Actions based on Statutory Hierarchy */}
+                        <div className="shrink-0 flex flex-col items-start md:items-end gap-2">
+                          {ticket.principalStatus === 'pending' && (
+                            <div className="text-right">
+                              <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 border border-slate-700 text-[11px] font-bold flex items-center gap-1.5">
+                                <Lock className="w-3.5 h-3.5 text-slate-500" />
+                                <span>🔒 Locked: Awaiting Principal Approval</span>
+                              </span>
+                              <span className="text-[10px] text-slate-500 block mt-1">
+                                Cannot dispatch fleet until Headmaster signs off
+                              </span>
+                            </div>
+                          )}
+
+                          {ticket.principalStatus === 'approved' && ticket.deoStatus === 'pending_dispatch' && (
+                            <div className="flex flex-col items-start md:items-end gap-1.5">
+                              <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-bold flex items-center gap-1.5 animate-pulse">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Dual-Key Authorized by Principal</span>
+                              </span>
+                              <button
+                                onClick={() => {
+                                  dispatchByDeo(ticket.id, currentUser.id, currentUser.name);
+                                  setGovernanceTickets(getGovernanceTickets());
+                                  setIsHazmatDispatched(true);
+                                  alert(`🚚 Hazmat Fleet Dispatched!\nRoute assigned to vehicle TN-38-HZ-04 for ${ticket.schoolName}.\nRegulatory manifest created.`);
+                                }}
+                                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-600/30 flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Truck className="w-4 h-4" />
+                                <span>Accept & Dispatch Hazmat Fleet</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {ticket.deoStatus === 'dispatched' && (
+                            <div className="flex flex-col items-start md:items-end gap-1.5">
+                              <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1.5">
+                                <Truck className="w-3.5 h-3.5" />
+                                <span>Hazmat Vehicle En Route</span>
+                              </span>
+                              <div className="text-[10px] font-mono text-emerald-400 text-right">
+                                <div>{ticket.fleetVehicleId}</div>
+                                <div>Manifest #{ticket.manifestId} • {ticket.estimatedPickupAt}</div>
+                              </div>
+                              <button
+                                onClick={() => downloadComplianceManifest(selectedSchool, bottles)}
+                                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-medium flex items-center gap-1"
+                              >
+                                <FileDown className="w-3 h-3 text-emerald-400" />
+                                <span>Download Regulatory Manifest</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {ticket.principalStatus === 'rejected' && (
+                            <span className="px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-300 border border-rose-500/30 text-[11px] font-bold">
+                              ❌ Denied by Principal ({ticket.principalNotes})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
 
               {/* Interactive Visual Map Representation */}
               <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -2255,11 +2580,42 @@ export default function ReagentWatchDashboard() {
                 voiceText || 'Incident escalated via mobile voice reporting',
                 95
               );
+              
+              // Continuous Institutional Flow: Submit to Headmaster's HITL Queue
+              const ticket = submitTeacherIncident({
+                bottleId: updated.id,
+                chemicalName: updated.chemical.canonicalName,
+                chemicalFormula: updated.chemical.chemicalFormula,
+                casNumber: updated.chemical.casNumber,
+                schoolId: selectedSchool.id,
+                schoolName: selectedSchool.name,
+                roomName: 'Senior Chemistry Lab 102',
+                cabinetName: 'Cabinet B (Flammables / Organics)',
+                shelfNumber: 'Shelf 2 (Middle Shelf)',
+                volumeMl: updated.currentVolumeMl,
+                unit: updated.unit,
+                riskScore: 98,
+                anomalyType: (incidentType || 'degradation_incident').replace(/_/g, ' '),
+                teacherObservation: voiceText || 'Degradation incident reported by science teacher via laboratory mobile inspection.',
+                teacherId: currentUser.id,
+                teacherName: currentUser.name,
+                teacherDesignation: currentUser.designation || 'Science Teacher / Lab Custodian',
+                urgency: 'critical',
+              });
+              setGovernanceTickets(getGovernanceTickets());
+
+              if (currentUser.role === 'teacher') {
+                setTeacherEscalationNotice(
+                  `✅ Incident #${ticket.id} Escalated: Anomaly reported for ${updated.chemical.canonicalName}. Dual-Key sign-off requested from Headmaster Dr. K. Meenakshi, Ph.D.`
+                );
+              }
             }
             setAlerts(prev => [newAlert, ...prev]);
             saveAlert(newAlert);
             setIsIncidentModalOpen(false);
-            setIsHitlModalOpen(true);
+            if (currentUser.role === 'principal') {
+              setIsHitlModalOpen(true);
+            }
           }}
         />
       )}
@@ -2309,6 +2665,15 @@ export default function ReagentWatchDashboard() {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
+      />
+
+      {/* ========================================================= */}
+      {/* MODAL 7: SCIENCE TEACHER PROVISIONING (Principal Rights) */}
+      {/* ========================================================= */}
+      <TeacherProvisioningModal
+        isOpen={isTeacherProvModalOpen}
+        onClose={() => setIsTeacherProvModalOpen(false)}
+        currentSchool={selectedSchool}
       />
     </div>
   );

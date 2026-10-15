@@ -29,7 +29,7 @@ interface AuthModalProps {
 
 export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const { currentUser, loginAsRole, loginWithCredentials, signUp } = useAuth();
-  const [tab, setTab] = useState<'personas' | 'signin' | 'signup'>('personas');
+  const [tab, setTab] = useState<'signin' | 'signup'>('signin');
   
   // Sign in state
   const [signInEmail, setSignInEmail] = useState('');
@@ -48,14 +48,6 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
 
   if (!isOpen) return null;
 
-  const handlePersonaSelect = (roleKey: 'teacher' | 'principal' | 'district_officer') => {
-    loginAsRole(roleKey);
-    setStatusMessage(`Successfully signed in as ${PRESET_USERS[roleKey].name}`);
-    setTimeout(() => {
-      onClose();
-      setStatusMessage(null);
-    }, 400);
-  };
 
   const handleSignInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,16 +106,6 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         {/* Tabs */}
         <div className="flex items-center border-b border-slate-800 bg-slate-950/40 px-5 pt-3 text-xs gap-2">
           <button
-            onClick={() => setTab('personas')}
-            className={`pb-3 px-3 font-bold border-b-2 transition-all cursor-pointer ${
-              tab === 'personas'
-                ? 'border-emerald-400 text-emerald-300'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            ⚡ 1-Click Role Personas
-          </button>
-          <button
             onClick={() => setTab('signin')}
             className={`pb-3 px-3 font-bold border-b-2 transition-all cursor-pointer ${
               tab === 'signin'
@@ -155,98 +137,6 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
 
         {/* Body Content */}
         <div className="p-5 overflow-y-auto space-y-4 text-xs">
-          {/* TAB 1: 1-CLICK ROLE PERSONAS */}
-          {tab === 'personas' && (
-            <div className="space-y-3">
-              <p className="text-slate-400 text-xs">
-                Select an institutional role to experience how ReagentWatch dynamically adapts its capabilities, permissions, and security floors:
-              </p>
-
-              {/* Teacher Persona */}
-              <div
-                onClick={() => handlePersonaSelect('teacher')}
-                className={`p-4 rounded-xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
-                  currentUser.role === 'teacher'
-                    ? 'bg-cyan-950/40 border-cyan-500 shadow-md shadow-cyan-500/10'
-                    : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">👨‍🏫</span>
-                    <span className="font-bold text-white text-xs">{PRESET_USERS.teacher.name}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono font-bold">
-                      TEACHER / LAB INCHARGE
-                    </span>
-                  </div>
-                  <p className="text-slate-300 text-[11px] font-medium">{PRESET_USERS.teacher.schoolName}</p>
-                  <div className="text-[10px] text-slate-400 space-y-0.5">
-                    <div>✓ Mobile QR Edge Scanner & Multimodal Vision Anomaly Detection</div>
-                    <div>✓ Multilingual Voice Incident Logger (Tamil, Hindi, English)</div>
-                    <div>✓ AI Safety Data Sheet Copilot & GHS Neutralization protocols</div>
-                    <div className="text-amber-400">⚠ Chemical Disposal overrides require Principal sign-off</div>
-                  </div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-slate-500 shrink-0 mt-1" />
-              </div>
-
-              {/* Principal Persona */}
-              <div
-                onClick={() => handlePersonaSelect('principal')}
-                className={`p-4 rounded-xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
-                  currentUser.role === 'principal'
-                    ? 'bg-amber-950/40 border-amber-500 shadow-md shadow-amber-500/10'
-                    : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">🎓</span>
-                    <span className="font-bold text-white text-xs">{PRESET_USERS.principal.name}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono font-bold">
-                      HEADMASTER / PRINCIPAL
-                    </span>
-                  </div>
-                  <p className="text-slate-300 text-[11px] font-medium">{PRESET_USERS.principal.schoolName}</p>
-                  <div className="text-[10px] text-slate-400 space-y-0.5">
-                    <div>✓ Institutional Incident Sign-Off & Audit Trail Certification</div>
-                    <div>✓ LangGraph Human-In-The-Loop (HITL) Level 2 Quarantine Authorization</div>
-                    <div>✓ Authority SMS/WhatsApp Dispatch & Evacuation Broadcast</div>
-                    <div>✓ Official State Compliance PDF Manifest Generator</div>
-                  </div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-slate-500 shrink-0 mt-1" />
-              </div>
-
-              {/* District Officer Persona */}
-              <div
-                onClick={() => handlePersonaSelect('district_officer')}
-                className={`p-4 rounded-xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
-                  currentUser.role === 'district_officer'
-                    ? 'bg-emerald-950/40 border-emerald-500 shadow-md shadow-emerald-500/10'
-                    : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">🛡️</span>
-                    <span className="font-bold text-white text-xs">{PRESET_USERS.district_officer.name}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold">
-                      DISTRICT EDUCATION OFFICER
-                    </span>
-                  </div>
-                  <p className="text-slate-300 text-[11px] font-medium">{PRESET_USERS.district_officer.schoolName}</p>
-                  <div className="text-[10px] text-slate-400 space-y-0.5">
-                    <div>✓ District-Wide GIS Hazard Heatmap & Multi-School Routing</div>
-                    <div>✓ Hazmat Waste Vehicle Cluster Route Optimizer (100.2 km Circuit)</div>
-                    <div>✓ Cross-School Chemical Surplus Pooling & Safe Transfer</div>
-                    <div>✓ District Budgeting & Logistics Cost-Reduction Analytics</div>
-                  </div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-slate-500 shrink-0 mt-1" />
-              </div>
-            </div>
-          )}
 
           {/* TAB 2: INSTITUTIONAL SIGN IN */}
           {tab === 'signin' && (

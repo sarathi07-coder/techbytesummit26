@@ -84,9 +84,25 @@ import {
   supabaseGetUserProfile 
 } from '@/lib/supabase';
 
+export interface TeacherProfile extends UserProfile {
+  username?: string;
+  labRoom?: string;
+  createdByPrincipal?: string;
+  createdDate?: string;
+}
+
 interface AuthContextType {
   currentUser: UserProfile;
   isAuthenticated: boolean;
+  registeredTeachers: TeacherProfile[];
+  createTeacherByPrincipal: (data: {
+    name: string;
+    email: string;
+    username?: string;
+    password?: string;
+    schoolId: string;
+    labRoom?: string;
+  }) => Promise<{ success: boolean; teacher?: TeacherProfile; error?: string }>;
   loginAsRole: (role: 'teacher' | 'principal' | 'district_officer') => void;
   loginWithCredentials: (identifier: string, password?: string, role?: UserRole, schoolId?: string) => Promise<boolean> | boolean;
   loginWithOtp: (email: string, otp: string, role: UserRole, schoolId?: string) => Promise<{ success: boolean; error?: string }>;
@@ -100,8 +116,17 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<UserProfile>(PRESET_USERS.teacher);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [registeredTeachers, setRegisteredTeachers] = useState<TeacherProfile[]>([
+    {
+      ...PRESET_USERS.teacher,
+      username: 'TCH-SELVA-01',
+      labRoom: 'Senior Chemistry Lab 102',
+      createdByPrincipal: 'Dr. K. Meenakshi, Ph.D.',
+      createdDate: '2026-09-01',
+    }
+  ]);
 
-  // Load persisted session on mount & subscribe to Supabase Auth
+  // Load persisted session & teachers on mount & subscribe to Supabase Auth
   useEffect(() => {
     try {
       const stored = localStorage.getItem('reagentwatch_auth_user');
@@ -110,6 +135,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (parsed && parsed.role) {
           setCurrentUser(parsed);
           setIsAuthenticated(true);
+        }
+      }
+
+      const storedTeachers = localStorage.getItem('reagentwatch_created_teachers');
+      if (storedTeachers) {
+        const parsedTeachers = JSON.parse(storedTeachers);
+        if (Array.isArray(parsedTeachers) && parsedTeachers.length > 0) {
+          setRegisteredTeachers(parsedTeachers);
         }
       }
     } catch {}
@@ -155,6 +188,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const createTeacherByPrincipal = async (data: {
+    name: string;
+    email: string;
+    username?: string;
+    password?: string;
+    schoolId: string;
+    labRoom?: string;
+  }): Promise<{ success: boolean; teacher?: TeacherProfile; error?: string }> => {
+    try {
+      const matchedSchool = SEED_SCHOOLS.find(s => s.id === data.schoolId) || SEED_SCHOOLS[0];
+      const newTeacher: TeacherProfile = {
+        id: `teacher-${Date.now()}`,
+        name: data.name,
+        email: data.email,
+        username: data.username || `TCH-${data.name.slice(0, 3).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
+        role: 'teacher',
+        designation: 'Science Teacher & Lab Custodian',
+        schoolId: matchedSchool.id,
+        schoolName: matchedSchool.name,
+        labRoom: data.labRoom || 'Senior Chemistry Lab',
+        createdByPrincipal: currentUser.name,
+        createdDate: new Date().toISOString().split('T')[0],
+        permissions: PRESET_USERS.teacher.permissions,
+      };
+
+      if (supabase && data.password) {
+        try {
+          await supabaseSignUp(
+            data.name,
+            data.email,
+            data.password,
+            'teacher',
+            matchedSchool.id,
+            data.username
+          );
+        } catch (e) {
+          console.warn('Supabase teacher sync:', e);
+        }
+      }
+
+      const nextList = [newTeacher, ...registeredTeachers];
+      setRegisteredTeachers(nextList);
+      try {
+        localStorage.setItem('reagentwatch_created_teachers', JSON.stringify(nextList));
+      } catch {}
+
+      return { success: true, teacher: newTeacher };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to provision teacher credential' };
+    }
+  };
+
   const loginWithCredentials = async (
     identifier: string, 
     password?: string, 
@@ -172,6 +257,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.warn('Supabase sign in warning:', err);
       }
+    }
+
+    // Check provisioned teachers first
+    const foundTeacher = registeredTeachers.find(t => 
+      t.email.toLowerCase() === email.toLowerCase() || 
+      (t.username && t.username.toLowerCase() === identifier.toLowerCase().trim())
+    );
+    if (foundTeacher) {
+      setCurrentUser(foundTeacher);
+      setIsAuthenticated(true);
+      try {
+        localStorage.setItem('reagentwatch_auth_user', JSON.stringify(foundTeacher));
+      } catch {}
+      return true;
     }
 
     const lowerId = identifier.toLowerCase();
@@ -325,6 +424,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         currentUser,
         isAuthenticated,
+        registeredTeachers,
+        createTeacherByPrincipal,
         loginAsRole,
         loginWithCredentials,
         loginWithOtp,
